@@ -3,7 +3,7 @@
 
 **Lokasi studi kasus:** Tambak Maneron (Maneron, Kecamatan Sepulu, Kabupaten Bangkalan, Madura)  
 **Komoditas:** Udang vaname (*Litopenaeus vannamei*)  
-**Platform:** ESP32 dan aplikasi mobile Expo/React Native  
+**Platform:** ESP32 dan aplikasi mobile Flutter (Dart)  
 **Periode deteksi:** 10 menit
 
 ---
@@ -46,14 +46,14 @@ Probe EC ─┘                         │
                                     v
                          Aplikasi Aquapenaeus C4.5
                          ├─ klasifikasi C4.5
-                         ├─ riwayat dan alert
-                         └─ AsyncStorage lokal
-                            (cache saat offline)
+                         ├─ riwayat dan simulator What-If
+                         └─ penyimpanan lokal Android/iOS
+                            melalui Flutter MethodChannel
 ```
 
 Firmware mengirim HTTP POST ke endpoint penerima. Aplikasi membaca endpoint REST dengan HTTP GET. Karena format POST dan GET berperan berbeda, backend/bridge harus menyediakan rute penerima telemetry dan rute pembacaan data terbaru. Sketch ESP32 bukan server REST dan tidak membuka endpoint GET secara langsung.
 
-Modul `src/services/iotBackend.ts` memisahkan adapter pengambil telemetry dari alur klasifikasi. Adapter REST tersedia; kontraknya dapat diimplementasikan untuk Supabase atau Firebase tanpa menambahkan SDK maupun kredensial ke aplikasi. Implementasi server/backend eksternal tetap diperlukan.
+Aplikasi Flutter menggunakan `HttpClient` dari Dart SDK untuk mengambil telemetry melalui REST. Penyimpanan lokal memakai platform API bawaan melalui Flutter MethodChannel: Android SharedPreferences dan iOS UserDefaults. Tidak ada package pihak ketiga pada aplikasi; backend/bridge REST tetap disediakan terpisah.
 
 ### 2.2 Pinout ESP32
 
@@ -157,9 +157,9 @@ Layar Analisis memisahkan angka empiris artikel dari metrik demo yang dihitung u
 
 ### 4.1 Filosofi antarmuka
 
-Antarmuka mempertahankan struktur kartu, hierarki informasi, tipografi Plus Jakarta Sans dan JetBrains Mono, serta pola *Tactile Field-Instrument*. Palet Cool Alabaster dan putih memakai Deep Marine Blue untuk fokus, Oceanic Blue sebagai aksen grafik, Ice Blue untuk highlight, serta amber/crimson untuk peringatan dan kondisi kritis. Warna digunakan sebagai indikator status yang konsisten, bukan dekorasi berlebihan.
+Antarmuka menggunakan widget Material bawaan Flutter dengan struktur kartu, hierarki informasi, dan palet biru maritim, putih, amber, serta merah untuk status. Warna dipakai sebagai indikator status yang konsisten, bukan dekorasi berlebihan.
 
-Tab Perangkat menyediakan slider offset pH (±1, step 0,05), suhu dan salinitas (±5, step 0,1), pratinjau raw/terkalibrasi, dan tombol **Nolkan Semua Offset**. Slider split pH, suhu, serta batas bawah/atas salinitas memakai preset Standar Jurnal & Tambak Maneron, Intensif, atau Pasca-Hujan; simpan menerapkan pengaturan ke AsyncStorage.
+Tab Perangkat menyediakan pengaturan ID perangkat dan endpoint REST, slider offset pH/suhu/salinitas, serta slider ambang split C4.5. Pengaturan dan riwayat disimpan secara lokal melalui API platform bawaan, tanpa plugin penyimpanan eksternal.
 
 ### 4.2 Rencana uji fungsional
 
@@ -179,21 +179,16 @@ Pengujian interval penuh sebaiknya dilakukan dengan timestamp/log perangkat dan 
 
 ## Bab 5 — Panduan Instalasi, Kalibrasi, dan Menjalankan
 
-### 5.1 Aplikasi Expo Go
+### 5.1 Aplikasi Flutter
 
-1. Siapkan Node.js LTS 22.13+ sesuai kebutuhan React Native pada Expo SDK 58 dan instal dependensi dengan `npm ci`.
-2. Jalankan `npm run typecheck` untuk memeriksa tipe TypeScript.
-3. Jalankan `npx expo start`.
-4. Buka QR code menggunakan Expo Go yang kompatibel dengan SDK 58.
-5. Untuk mode demo, biarkan **Mode Simulasi Data** aktif. Gunakan **Uji Siklus Sekarang** saat presentasi.
-6. Untuk sensor nyata, simpan ID dan endpoint GET backend pada tab **Perangkat**, lalu matikan mode simulasi.
+1. Pasang Flutter SDK dan Android Studio untuk Android atau Xcode untuk iOS.
+2. Dari root repository, jalankan `flutter pub get`, `flutter analyze`, lalu `flutter test`.
+3. Hubungkan perangkat atau jalankan emulator, kemudian jalankan `flutter run`.
+4. Untuk membuat APK debug, jalankan `flutter build apk --debug`; Android SDK/JDK harus tersedia.
+5. Untuk mode demo, biarkan **Mode Simulasi Data** aktif dan gunakan **Uji Siklus Sekarang**.
+6. Untuk sensor nyata, simpan endpoint GET backend di tab **Perangkat**, lalu matikan mode simulasi.
 
-### 5.2 Menjalankan lintas sistem operasi dan perangkat
-
-- **Windows (PowerShell/CMD):** instal Node.js LTS 22.13+ dan jalankan `npm ci`, `npx expo start`. PowerShell untuk Android SDK: `$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"` lalu tambahkan `platform-tools` dan `emulator` ke `PATH`. CMD dapat memakai `set ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk` dan `set PATH=%PATH%;%ANDROID_HOME%\platform-tools;%ANDROID_HOME%\emulator`.
-- **Android Studio Emulator:** buat dan boot AVD, pastikan `adb devices` melihatnya, lalu jalankan `npx expo start` dan tekan **`a`** pada terminal Expo. macOS umumnya memakai `$HOME/Library/Android/sdk`; Linux `$HOME/Android/Sdk`. Set `ANDROID_HOME` dan `PATH` sesuai lokasi. Expo CLI biasanya menemukan ADB dari variabel tersebut; `ADB_PATH` hanya diperlukan oleh skrip kustom yang memang membacanya. Build APK lokal memerlukan Android Studio/JDK/SDK. Untuk APK cloud/internal, jalankan `npx eas-cli build --platform android --profile preview`; profil `production` disiapkan untuk App Bundle.
-- **HP Android/iOS:** instal Expo Go kompatibel SDK 58, jalankan `npx expo start --host lan`, lalu pindai QR di jaringan yang sama. Gunakan `npx expo start --tunnel` bila LAN tidak dapat mengakses komputer (memerlukan internet). Simulator iOS native hanya tersedia pada macOS dengan Xcode.
-- **Browser Web (Windows/macOS/Linux):** jalankan `npx expo start --web`; proyek menggunakan bundler Metro dan `react-native-web`.
+Proyek ini memakai Flutter/Dart SDK tanpa package pihak ketiga. Aplikasi ditargetkan untuk Android dan iOS. Backend penerima POST dari firmware harus menyediakan endpoint GET untuk data terbaru.
 
 ### 5.3 Flashing ESP32
 
