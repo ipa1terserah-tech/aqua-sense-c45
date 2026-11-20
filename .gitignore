@@ -28,3 +28,6 @@ ios/.symlinks/
 .idea/
 *.iml
 .DS_Store
+
+# Local firmware credentials; copy secrets.example.h to secrets.h locally
+firmware/esp32_aquapenaeus_c45/secrets.h

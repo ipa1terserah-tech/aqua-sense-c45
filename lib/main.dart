@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'local_store.dart';
+import 'supabase_telemetry.dart';
 
 const splitPointDefault = {
   'ph': 7.5,
@@ -150,6 +151,47 @@ class Reading {
     recommendation: json['recommendation'] as String? ?? '',
     isComplete: json['isComplete'] as bool? ?? true,
   );
+
+  factory Reading.fromSupabase({
+    required Map<String, dynamic> row,
+    required String pond,
+    required Map<String, double> thresholds,
+    required Map<String, double> calibration,
+  }) {
+    final rawTemperature = (row['temperature'] ?? row['suhu']) as num?;
+    final rawPh = row['ph'] as num?;
+    final rawSalinity = (row['salinity'] ?? row['salinitas']) as num?;
+    if (rawTemperature == null || rawPh == null || rawSalinity == null) {
+      throw const FormatException(
+        'Baris telemetry Supabase harus memiliki temperature, ph, dan salinity.',
+      );
+    }
+    final values = SensorValues(
+      rawPh.toDouble() + (calibration['ph'] ?? 0),
+      rawTemperature.toDouble() + (calibration['temperature'] ?? 0),
+      rawSalinity.toDouble() + (calibration['salinity'] ?? 0),
+    );
+    final decision = evaluate(values, thresholds);
+    final measuredAt =
+        row['measured_at'] ?? row['timestamp'] ?? row['created_at'];
+    if (measuredAt is! String || DateTime.tryParse(measuredAt) == null) {
+      throw const FormatException(
+        'Baris telemetry Supabase harus memiliki measured_at yang valid.',
+      );
+    }
+    return Reading(
+      id: row['id']?.toString() ?? '${row['device_id'] ?? 'ESP32'}-$measuredAt',
+      pond: pond,
+      timestamp: DateTime.parse(measuredAt).toLocal(),
+      source: row['source']?.toString() ?? 'ESP32_LIVE',
+      ph: values.ph,
+      temperature: values.temperature,
+      salinity: values.salinity,
+      classification: decision.classification,
+      recommendation: decision.recommendation,
+      isComplete: row['is_complete'] as bool? ?? true,
+    );
+  }
 }
 
 class _MonitorPage extends StatelessWidget {
@@ -589,6 +631,7 @@ class _DevicePage extends StatefulWidget {
     Map<String, double> thresholds,
   )
   onSaveSettings;
+  final bool supabaseConfigured;
   final Future<void> Function(Reading record) onSaveCalibrationTest;
 
   const _DevicePage({
@@ -599,6 +642,7 @@ class _DevicePage extends StatefulWidget {
     required this.thresholds,
     required this.onSaveDevice,
     required this.onSaveSettings,
+    required this.supabaseConfigured,
     required this.onSaveCalibrationTest,
   });
 
@@ -650,6 +694,23 @@ class _DevicePageState extends State<_DevicePage> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Database utama: Supabase'),
+                  subtitle: Text(
+                    widget.supabaseConfigured
+                        ? 'Konfigurasi tersedia; aplikasi menggunakan REST dan mencoba Realtime Supabase.'
+                        : 'Belum dikonfigurasi. Isi SUPABASE_URL dan SUPABASE_ANON_KEY saat menjalankan aplikasi.',
+                  ),
+                  leading: Icon(
+                    widget.supabaseConfigured
+                        ? Icons.cloud_done
+                        : Icons.cloud_off,
+                    color: widget.supabaseConfigured
+                        ? const Color(0xFF0F4C81)
+                        : const Color(0xFFD97706),
+                  ),
+                ),
                 TextField(
                   controller: idController,
                   decoration: const InputDecoration(labelText: 'ID Perangkat'),
@@ -658,7 +719,7 @@ class _DevicePageState extends State<_DevicePage> {
                 TextField(
                   controller: endpointController,
                   decoration: const InputDecoration(
-                    labelText: 'Endpoint REST ESP32 / Gateway',
+                    labelText: 'Endpoint REST fallback (opsional)',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -819,10 +880,23 @@ class _HomePageState extends State<HomePage> {
   late SensorValues reading;
   List<Reading> logs = [];
   Timer? cycleTimer;
+  StreamSubscription<Map<String, dynamic>>? realtimeSubscription;
+  late final SupabaseTelemetryService supabase;
+
+  String get pondId => pond.toUpperCase().replaceAll(' ', '-');
+  List<Reading> get cachedSensorReadings => logs
+      .where(
+        (item) =>
+            item.pond == pond &&
+            item.source != 'SIMULASI_UJI' &&
+            item.source != 'UJI_KALIBRASI',
+      )
+      .toList();
 
   @override
   void initState() {
     super.initState();
+    supabase = SupabaseTelemetryService(SupabaseConfig.fromEnvironment);
     reading = SensorValues(7.9, 29.4, 21);
     _load();
     cycleTimer = Timer.periodic(
@@ -834,6 +908,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     cycleTimer?.cancel();
+    unawaited(realtimeSubscription?.cancel());
     super.dispose();
   }
 
@@ -871,6 +946,146 @@ class _HomePageState extends State<HomePage> {
       errorMessage = 'Gagal memuat penyimpanan lokal: $error';
     }
     if (mounted) setState(() {});
+    if (supabase.config.isConfigured) {
+      await _refreshFromSupabase();
+      _listenForRealtime();
+    }
+  }
+
+  Future<void> _refreshFromSupabase() async {
+    try {
+      final rows = await supabase.fetchHistory(pondId: pondId);
+      final remoteReadings = rows
+          .map(
+            (row) => Reading.fromSupabase(
+              row: row,
+              pond: pond,
+              thresholds: thresholds,
+              calibration: calibration,
+            ),
+          )
+          .toList();
+      if (!mounted) return;
+      final mergedById = <String, Reading>{
+        for (final item in logs.where((item) => item.pond == pond))
+          item.id: item,
+        for (final item in remoteReadings) item.id: item,
+      };
+      final merged = mergedById.values.toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      setState(() {
+        logs = merged.take(1500).toList();
+        if (remoteReadings.isNotEmpty) {
+          reading = SensorValues(
+            remoteReadings.first.ph,
+            remoteReadings.first.temperature,
+            remoteReadings.first.salinity,
+          );
+          sensorOnline = true;
+          showingCache = false;
+        } else {
+          final localSensor = cachedSensorReadings;
+          if (localSensor.isNotEmpty) {
+            final latest = localSensor.first;
+            reading = SensorValues(
+              latest.ph,
+              latest.temperature,
+              latest.salinity,
+            );
+            showingCache = true;
+          }
+          sensorOnline = false;
+        }
+        errorMessage = '';
+      });
+      await _saveStore();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        sensorOnline = false;
+        showingCache = cachedSensorReadings.isNotEmpty;
+        errorMessage =
+            'Gagal membaca telemetry Supabase: $error. Data terakhir tetap tersedia dari cache lokal.';
+      });
+    }
+  }
+
+  void _listenForRealtime() {
+    if (!supabase.config.isConfigured) return;
+    unawaited(realtimeSubscription?.cancel());
+    realtimeSubscription = supabase
+        .watchPond(
+          pondId,
+          onConnected: () {
+            if (!mounted) return;
+            setState(() {
+              errorMessage = '';
+            });
+            unawaited(_refreshFromSupabase());
+          },
+        )
+        .listen(
+          _handleRealtimeRecord,
+          onError: (Object error) {
+            if (!mounted) return;
+            setState(() {
+              sensorOnline = false;
+              showingCache = cachedSensorReadings.isNotEmpty;
+              errorMessage =
+                  'Koneksi Supabase Realtime terputus: $error. Mencoba menyambungkan kembali.';
+            });
+          },
+        );
+  }
+
+  void _handleRealtimeRecord(Map<String, dynamic> row) {
+    try {
+      final remote = Reading.fromSupabase(
+        row: row,
+        pond: pond,
+        thresholds: thresholds,
+        calibration: calibration,
+      );
+      if (!mounted) return;
+      setState(() {
+        logs.removeWhere((item) => item.id == remote.id);
+        logs.add(remote);
+        logs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        logs = logs.take(1500).toList();
+        reading = SensorValues(remote.ph, remote.temperature, remote.salinity);
+        sensorOnline = true;
+        showingCache = false;
+        errorMessage = '';
+      });
+      unawaited(_persistLocalCache());
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        errorMessage = 'Data Realtime Supabase tidak valid: $error';
+      });
+    }
+  }
+
+  Future<void> _persistLocalCache() async {
+    try {
+      await _saveStore();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        errorMessage =
+            'Telemetry masuk, tetapi cache lokal gagal disimpan: $error';
+      });
+    }
+  }
+
+  void _togglePond() {
+    setState(() {
+      pond = pond == 'Kolam A1' ? 'Kolam A2' : 'Kolam A1';
+    });
+    if (supabase.config.isConfigured) {
+      _listenForRealtime();
+      unawaited(_refreshFromSupabase());
+    }
   }
 
   Future<void> _saveStore() async {
@@ -908,6 +1123,36 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _runCycle([String source = 'ESP32_LIVE']) async {
     try {
+      if (!simulated && supabase.config.isConfigured) {
+        final rows = await supabase.fetchHistory(pondId: pondId, limit: 1);
+        if (rows.isEmpty) {
+          throw StateError('Belum ada telemetry untuk $pond di Supabase.');
+        }
+        final remote = Reading.fromSupabase(
+          row: rows.first,
+          pond: pond,
+          thresholds: thresholds,
+          calibration: calibration,
+        );
+        if (!mounted) return;
+        setState(() {
+          logs.removeWhere((item) => item.id == remote.id);
+          logs.add(remote);
+          logs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          logs = logs.take(1500).toList();
+          reading = SensorValues(
+            remote.ph,
+            remote.temperature,
+            remote.salinity,
+          );
+          sensorOnline = true;
+          showingCache = false;
+          errorMessage = '';
+        });
+        await _saveStore();
+        return;
+      }
+
       SensorValues next;
       String readingSource;
       if (simulated) {
@@ -930,7 +1175,9 @@ class _HomePageState extends State<HomePage> {
         showingCache = false;
       } else {
         if (endpoint.trim().isEmpty) {
-          throw Exception('URL REST ESP32 belum diatur.');
+          throw StateError(
+            'Supabase belum dikonfigurasi dan URL REST fallback kosong.',
+          );
         }
         final data = await _fetchSensorPayload();
         next = SensorValues(
@@ -968,12 +1215,13 @@ class _HomePageState extends State<HomePage> {
       await _saveStore();
     } catch (error) {
       if (!mounted) return;
-      final hasCachedReading = !simulated && logs.isNotEmpty;
+      final cached = cachedSensorReadings;
+      final hasCachedReading = !simulated && cached.isNotEmpty;
       setState(() {
         sensorOnline = false;
         showingCache = hasCachedReading;
         errorMessage = hasCachedReading
-            ? 'Backend tidak terjangkau ($error). Menampilkan data lokal terakhir dari ${logs.first.timestamp.toLocal()}.'
+            ? 'Backend tidak terjangkau ($error). Menampilkan data lokal terakhir dari ${cached.first.timestamp.toLocal()}.'
             : 'Siklus deteksi gagal: $error';
       });
     }
@@ -1043,6 +1291,7 @@ class _HomePageState extends State<HomePage> {
         thresholds: thresholds,
         onSaveDevice: _saveDevice,
         onSaveSettings: _saveSettings,
+        supabaseConfigured: supabase.config.isConfigured,
         onSaveCalibrationTest: (record) async {
           setState(() => logs.insert(0, record));
           await _saveStore();
@@ -1069,9 +1318,7 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             tooltip: 'Ganti kolam',
-            onPressed: () => setState(
-              () => pond = pond == 'Kolam A1' ? 'Kolam A2' : 'Kolam A1',
-            ),
+            onPressed: _togglePond,
             icon: const Icon(Icons.swap_horiz),
           ),
         ],

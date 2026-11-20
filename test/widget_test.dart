@@ -31,4 +31,25 @@ void main() {
     final outsideRange = evaluate(SensorValues(7.8, 30, 27), splitPointDefault);
     expect(outsideRange.classification, 'TIDAK BAGUS');
   });
+
+  test('maps Supabase telemetry into a classified reading', () {
+    final reading = Reading.fromSupabase(
+      row: {
+        'id': 'telemetry-1',
+        'pond_id': 'KOLAM-A1',
+        'device_id': 'ESP32-AQP-A1',
+        'temperature': 30,
+        'ph': 7.8,
+        'salinity': 20,
+        'measured_at': '2026-11-20T08:00:00Z',
+      },
+      pond: 'Kolam A1',
+      thresholds: splitPointDefault,
+      calibration: const {'ph': 0, 'temperature': 0, 'salinity': 0},
+    );
+
+    expect(reading.id, 'telemetry-1');
+    expect(reading.classification, 'BAGUS');
+    expect(reading.source, 'ESP32_LIVE');
+  });
 }

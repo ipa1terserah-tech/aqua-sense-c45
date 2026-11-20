@@ -21,9 +21,23 @@
 #include <DallasTemperature.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <time.h>
 #include <math.h>
 #include <string.h>
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#warning "Copy secrets.example.h to secrets.h and configure Supabase before use."
+#define AQUA_WIFI_SSID "GANTI_DENGAN_SSID"
+#define AQUA_WIFI_PASSWORD "GANTI_DENGAN_PASSWORD"
+#define AQUA_SUPABASE_FUNCTION_URL \
+  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/telemetry-ingest"
+#define AQUA_SUPABASE_ANON_KEY "GANTI_DENGAN_PUBLIC_ANON_KEY"
+#define AQUA_DEVICE_TOKEN "GANTI_DENGAN_TOKEN_PERANGKAT"
+#define AQUA_SUPABASE_ROOT_CA "GANTI_DENGAN_ROOT_CA_TLS_SUPABASE"
+#endif
 
 constexpr uint8_t PIN_DS18B20 = 4;
 constexpr uint8_t PIN_PH_ADC = 34;
@@ -31,9 +45,13 @@ constexpr uint8_t PIN_EC_ADC = 35;
 constexpr uint32_t SEND_INTERVAL_MS = 600000UL;
 constexpr uint8_t FILTER_WINDOW = 10;
 
-const char *WIFI_SSID = "GANTI_DENGAN_SSID";
-const char *WIFI_PASSWORD = "GANTI_DENGAN_PASSWORD";
-const char *API_URL = "http://192.168.1.10:3000/api/telemetry";
+const char *WIFI_SSID = AQUA_WIFI_SSID;
+const char *WIFI_PASSWORD = AQUA_WIFI_PASSWORD;
+const char *SUPABASE_FUNCTION_URL = AQUA_SUPABASE_FUNCTION_URL;
+const char *SUPABASE_ANON_KEY = AQUA_SUPABASE_ANON_KEY;
+const char *DEVICE_TOKEN = AQUA_DEVICE_TOKEN;
+const char *SUPABASE_ROOT_CA = AQUA_SUPABASE_ROOT_CA;
+const char *DEVICE_ID = "ESP32-AQP-A1";
 const char *POND_ID = "KOLAM-A1";
 const char *LOCATION = "Tambak Maneron, Bangkalan Madura";
 
@@ -161,12 +179,14 @@ void sendTelemetry(float temperatureC, float ph, float salinityPpt) {
     return;
   }
 
-  char payload[256];
+  char payload[320];
   snprintf(
       payload,
       sizeof(payload),
-      "{\"pond_id\":\"%s\",\"location\":\"%s\",\"temperature\":%.2f,"
-      "\"ph\":%.2f,\"salinity\":%.2f,\"timestamp\":\"%s\"}",
+      "{\"device_id\":\"%s\",\"pond_id\":\"%s\",\"location\":\"%s\","
+      "\"temperature\":%.2f,\"ph\":%.2f,\"salinity\":%.2f,"
+      "\"measured_at\":\"%s\"}",
+      DEVICE_ID,
       POND_ID,
       LOCATION,
       temperatureC,
@@ -174,12 +194,16 @@ void sendTelemetry(float temperatureC, float ph, float salinityPpt) {
       salinityPpt,
       timestamp);
 
+  WiFiClientSecure secureClient;
+  secureClient.setCACert(SUPABASE_ROOT_CA);
   HTTPClient http;
-  if (!http.begin(API_URL)) {
+  if (!http.begin(secureClient, SUPABASE_FUNCTION_URL)) {
     Serial.println("URL API tidak dapat dibuka.");
     return;
   }
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("x-device-token", DEVICE_TOKEN);
   const int statusCode = http.POST(reinterpret_cast<uint8_t *>(payload), strlen(payload));
   Serial.printf("POST telemetry: HTTP %d\n", statusCode);
   if (statusCode < 0) Serial.println(http.errorToString(statusCode));

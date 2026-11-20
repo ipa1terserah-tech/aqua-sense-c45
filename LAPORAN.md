@@ -39,9 +39,8 @@ Probe pH ─┼─> ADC/GPIO ESP32 ─> moving average + kalibrasi
 Probe EC ─┘                         │
                                     ├─ HTTP POST telemetry
                                     v
-                         Backend REST / bridge
-                         (adapter Supabase/Firebase
-                          dapat ditambahkan)
+                         Supabase Edge Function
+                         + PostgreSQL / Realtime
                                     │ HTTP GET data terbaru
                                     v
                          Aplikasi Aquapenaeus C4.5
@@ -51,7 +50,7 @@ Probe EC ─┘                         │
                             melalui Flutter MethodChannel
 ```
 
-Implementasi yang ada masih memakai HTTP POST firmware ke URL placeholder dan HTTP GET aplikasi ke endpoint yang dikonfigurasi; belum ada koneksi project Supabase atau subscription Realtime. Arsitektur target menggunakan Supabase sebagai backend, bukan broker MQTT: HTTPS POST melalui Edge Function untuk ingest, HTTPS REST untuk histori, dan WSS Supabase Realtime untuk event pembacaan baru. Rincian status dan requirement ada di [PRD.md](./PRD.md).
+Supabase ditetapkan sebagai database utama telemetry, bukan broker MQTT. Client Flutter sudah disiapkan untuk HTTPS REST (histori/pembacaan terakhir) dan WSS Supabase Realtime (insert baru). Firmware juga disiapkan untuk HTTPS POST ke Edge Function. Project Supabase, key, policy, dan Edge Function masih harus diisi/dideploy; sampai itu selesai aplikasi memakai cache/simulasi atau endpoint fallback. Rincian dan handoff ada di [PRD.md](./PRD.md), [supabase/README.md](./supabase/README.md), dan [supabase/schema.sql](./supabase/schema.sql).
 
 Aplikasi Flutter menggunakan `HttpClient` dari Dart SDK dan penyimpanan lokal melalui API platform bawaan Android/iOS. Tidak ada package pihak ketiga pada aplikasi saat ini. Integrasi Supabase harus menambahkan konfigurasi endpoint yang aman tanpa memasukkan `service_role` key ke firmware, aplikasi, atau repository.
 
@@ -195,7 +194,7 @@ Proyek ini memakai Flutter/Dart SDK tanpa package pihak ketiga. Aplikasi ditarge
 1. Instal Arduino IDE, board package ESP32, serta library OneWire dan DallasTemperature.
 2. Buka `firmware/esp32_aquapenaeus_c45/esp32_aquapenaeus_c45.ino`.
 3. Periksa pinout, sambungan ground, resistor pull-up DS18B20, serta batas tegangan ADC.
-4. Isi `WIFI_SSID`, `WIFI_PASSWORD`, `API_URL`, dan `POND_ID`. API URL harus menerima HTTP POST.
+4. Salin `secrets.example.h` menjadi `secrets.h`, lalu isi Wi-Fi, URL Supabase Edge Function, anon key publik, token perangkat, dan CA certificate TLS. Jangan commit `secrets.h`.
 5. Kalibrasikan pH dan EC sesuai petunjuk di bawah, pilih board/port, lalu unggah sketch.
 6. Buka Serial Monitor pada 115200 baud. Pastikan pembacaan masuk akal dan API merespons HTTP 2xx.
 
@@ -208,7 +207,7 @@ Proyek ini memakai Flutter/Dart SDK tanpa package pihak ketiga. Aplikasi ditarge
 
 ### 5.5 Batasan operasional
 
-Firmware saat ini tidak menyimpan antrean pengiriman offline pada ESP32. Ketika jaringan gagal, siklus itu dicatat di Serial namun tidak dikirim; aplikasi menggunakan pembacaan lokal terakhir yang pernah diterima. Adapter Supabase/Firebase dan backend penerima POST harus diimplementasikan serta diuji terpisah. Validasi data lapangan, keamanan jaringan, penyimpanan kredensial, autentikasi API, dan SOP tindakan tambak termasuk pekerjaan integrasi sebelum produksi.
+Firmware saat ini tidak menyimpan antrean pengiriman offline pada ESP32. Ketika jaringan gagal, siklus itu dicatat di Serial namun tidak dikirim; aplikasi menggunakan pembacaan lokal terakhir yang pernah diterima. Supabase client dan kontrak database sudah disiapkan, tetapi project Supabase, Edge Function penerima POST, policy final, dan credential perangkat masih harus disiapkan serta diuji. Validasi data lapangan, keamanan jaringan, penyimpanan kredensial, autentikasi API, dan SOP tindakan tambak tetap diperlukan sebelum produksi.
 
 ## Daftar Pustaka
 

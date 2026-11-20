@@ -16,7 +16,7 @@ Aquapenaeus C4.5 membantu operator tambak memantau suhu, pH, dan salinitas, meli
 
 **Supabase bukan broker MQTT.** Supabase adalah backend berbasis PostgreSQL dengan REST API dan layanan Realtime. Rancangan produk ini menggunakan HTTPS/JSON untuk ingest dan query, serta WebSocket Secure (WSS) untuk event realtime. MQTT tidak digunakan dalam rancangan MVP.
 
-> **Status saat ini:** repository belum terhubung ke project Supabase. Firmware masih mengirim HTTP POST ke URL placeholder `http://192.168.1.10:3000/api/telemetry`, sedangkan aplikasi membaca endpoint GET yang dikonfigurasi dan belum membuat subscription Supabase Realtime. Integrasi dalam dokumen ini adalah target produk, bukan fitur yang sudah aktif.
+> **Status saat ini:** repository telah memiliki client Flutter berbasis Dart SDK untuk REST dan Realtime, schema SQL awal, serta firmware yang disiapkan untuk Edge Function. Belum ada URL/key project, policy final, atau Edge Function yang aktif, jadi alur end-to-end belum bisa digunakan sampai temanmu mengisi konfigurasi dan menyiapkan project. `service_role` tidak boleh dimasukkan ke aplikasi atau firmware.
 
 ## 2. Masalah dan peluang
 
@@ -127,6 +127,8 @@ Realtime berarti UI menerima event segera setelah data berhasil masuk ke databas
 - Jangan mengirim secret backend di source, log, atau CSV.
 - Simpan event kesalahan tanpa menyalin token atau kredensial.
 
+Schema awal memberi akses baca `anon` untuk MVP agar aplikasi tanpa login dapat menampilkan telemetry. Artinya data telemetry dapat dibaca publik menggunakan project URL dan anon key. Ganti policy ini dengan autentikasi dan RLS per kolam sebelum menyimpan data yang tidak boleh publik.
+
 ## 7. Data dan kontrak telemetry
 
 ### Payload ingest yang diusulkan
@@ -213,12 +215,11 @@ Indeks minimum: `(pond_id, measured_at DESC)` dan `(device_id, measured_at DESC)
 
 ## 12. Tahapan implementasi
 
-1. **Supabase foundation:** buat project, tabel, indeks, RLS, autentikasi, dan secret.
-2. **Secure ingest:** implementasikan Edge Function, kontrak payload, validasi, serta uji dengan payload simulasi.
-3. **Firmware:** ganti placeholder `API_URL`, tambahkan identitas/token perangkat secara aman, tangani respons dan retry.
-4. **Flutter REST:** konfigurasi endpoint/key publik, initial fetch, query histori, filter, pagination, dan pemetaan error.
-5. **Flutter Realtime:** subscribe ke insert per kolam, reconnect, dedup event, dan fetch ulang setelah reconnect.
-6. **Offline, alert, dan ekspor:** cache, status stale, sinkronisasi, uji lapangan, serta evaluasi latensi.
+1. **Supabase foundation:** teman pengelola membuat project, menjalankan `supabase/schema.sql`, menetapkan policy/akses, dan mengisi secret.
+2. **Secure ingest:** deploy Edge Function `/functions/v1/telemetry-ingest`, validasi token perangkat, lalu uji dengan payload simulasi.
+3. **Konfigurasi perangkat:** isi file lokal `secrets.h` dan pasang CA TLS yang benar; jangan commit credential.
+4. **Flutter REST/Realtime:** client dasar, fetch histori, subscribe, reconnect, dedup, dan cache sudah ada; uji end-to-end setelah project aktif.
+5. **Offline, alert, dan ekspor:** lengkapi antrean telemetry, status stale, alert, uji lapangan, serta evaluasi latensi.
 
 Setiap tahap harus memiliki project Supabase pengujian terpisah dari produksi; credential produksi tidak dimasukkan ke repository.
 
@@ -226,10 +227,10 @@ Setiap tahap harus memiliki project Supabase pengujian terpisah dari produksi; c
 
 ### Asumsi PRD
 
-- Supabase menjadi backend target tunggal untuk MVP.
+- Supabase menjadi database utama telemetry dan histori untuk MVP.
 - ESP32 mengirim telemetry tiap 10 menit mengikuti firmware saat ini.
 - Data baru dihasilkan saat telemetry masuk; Realtime tidak mengubah interval sampling.
-- Flutter tidak menggunakan package pihak ketiga; integrasi Supabase akan memakai API Flutter/Dart dan protokol resmi Supabase.
+- Flutter tidak menggunakan package pihak ketiga; REST dan WebSocket menggunakan API Dart SDK dan protokol Supabase.
 
 ### Keputusan yang perlu dikonfirmasi
 
