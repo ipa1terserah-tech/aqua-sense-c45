@@ -4,8 +4,11 @@ export type SensorReading = SensorValues & {
   id: string;
   pond: string;
   timestamp: string;
-  source: "SIMULASI" | "ESP32 REST" | "CACHE LOKAL";
+  source: "SIMULASI" | "ESP32 REST" | "CACHE LOKAL" | "ESP32_LIVE" | "SIKLUS_10_MENIT" | "SIMULASI_UJI" | "UJI_KALIBRASI";
   rawValues?: SensorValues;
+  receivedAt?: string;
+  latencyMs?: number;
+  isComplete?: boolean;
 };
 
 export type SensorConfig = { endpoint: string; deviceId: string };
@@ -36,8 +39,10 @@ export async function fetchEsp32Reading(config: SensorConfig, pond: string): Pro
     const temperature = parseSensorValue(data.temperature ?? data.suhu, "temperature");
     const ph = parseSensorValue(data.ph, "ph");
     const salinity = parseSensorValue(data.salinity ?? data.salinitas, "salinity");
-    const timestamp = typeof data.timestamp === "string" && Number.isFinite(Date.parse(data.timestamp))
-      ? new Date(data.timestamp).toISOString()
+    const parsedTimestamp = typeof data.timestamp === "string" ? Date.parse(data.timestamp) : Number.NaN;
+    const hasValidTimestamp = Number.isFinite(parsedTimestamp);
+    const timestamp = hasValidTimestamp
+      ? new Date(parsedTimestamp).toISOString()
       : new Date().toISOString();
     return {
       id: String(data.deviceId ?? config.deviceId ?? data.pond_id ?? "ESP32-AQP-A1"),
@@ -47,6 +52,7 @@ export async function fetchEsp32Reading(config: SensorConfig, pond: string): Pro
       temperature,
       ph,
       salinity,
+      isComplete: hasValidTimestamp,
     };
   } finally {
     clearTimeout(timeout);

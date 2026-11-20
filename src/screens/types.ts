@@ -13,7 +13,12 @@ export type PantauProps = {
   lastUpdated: string;
 };
 
-export type AnalysisProps = { values: SensorValues; thresholds: SplitPoints };
+export type AnalysisProps = {
+  values: SensorValues;
+  thresholds: SplitPoints;
+  onSaveScenario: (values: SensorValues, classification: StoredReading["classification"], recommendation: string) => Promise<void>;
+  onError: (message: string) => void;
+};
 export type HistoryProps = { readings: StoredReading[]; onExport: () => void };
 export type DeviceProps = {
   deviceId: string;
@@ -25,4 +30,5 @@ export type DeviceProps = {
   alerts: StoredAlert[];
   onError: (message: string) => void;
   thresholds: SplitPoints;
+  onSaveCalibrationTest: (result: StoredReading) => Promise<void>;
 };

@@ -4,9 +4,9 @@ import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import { JetBrainsMono_500Medium } from "@expo-google-fonts/jetbrains-mono";
 import { PlusJakartaSans_400Regular, PlusJakartaSans_600SemiBold, PlusJakartaSans_700Bold } from "@expo-google-fonts/plus-jakarta-sans";
-import { evaluateWater, SplitPoints, splitPoints } from "./src/engine/c45";
+import { evaluateWater, SensorValues, SplitPoints, splitPoints } from "./src/engine/c45";
 import { simulatedReading, SensorReading } from "./src/services/iot";
-import { addAlert, getAlerts, getCalibration, getDeviceConfig, getReadings, getThresholds, saveInstrumentSettings, SensorCalibration, StoredAlert, StoredReading, saveDeviceConfig } from "./src/storage";
+import { addAlert, addReading, getAlerts, getCalibration, getDeviceConfig, getReadings, getThresholds, saveInstrumentSettings, SensorCalibration, StoredAlert, StoredReading, saveDeviceConfig } from "./src/storage";
 import { exportReadingsCsv } from "./src/storage/export";
 import { pollTelemetry, recordTelemetry } from "./src/services/iotBackend";
 import { colors, fonts } from "./src/theme";
@@ -85,7 +85,7 @@ export default function App() {
     if (!ready) return;
     let active = true;
     let busy = false;
-    const update = async () => {
+    const update = async (source: SensorReading["source"] = "ESP32_LIVE") => {
       if (busy) return;
       busy = true;
       try {
@@ -93,10 +93,12 @@ export default function App() {
         if (simulated) {
           const previousRaw = readingRef.current.rawValues ?? readingRef.current;
           const next = simulatedReading(previousRaw, pond);
-          saved = await recordTelemetry(next, thresholds, calibration);
+          saved = await recordTelemetry(next, thresholds, calibration, {
+            source: source === "SIKLUS_10_MENIT" ? source : next.source,
+          });
           if (active) setSensorOnline(false);
         } else {
-          const result = await pollTelemetry({ endpoint, deviceId }, pond, thresholds, calibration);
+          const result = await pollTelemetry({ endpoint, deviceId }, pond, thresholds, calibration, undefined, source);
           saved = result.reading;
           if (active) {
             setSensorOnline(!result.fromCache);
@@ -137,9 +139,9 @@ export default function App() {
         busy = false;
       }
     };
-    manualCycleRef.current = () => { void update(); };
-    void update();
-    const timer = setInterval(() => { void update(); }, 600000);
+    manualCycleRef.current = () => { void update(simulated ? "SIMULASI" : "ESP32_LIVE"); };
+    void update(simulated ? "SIMULASI" : "ESP32_LIVE");
+    const timer = setInterval(() => { void update("SIKLUS_10_MENIT"); }, 600000);
     return () => {
       active = false;
       manualCycleRef.current = null;
@@ -159,6 +161,29 @@ export default function App() {
     await saveInstrumentSettings(nextCalibration, nextThresholds);
     setCalibration(nextCalibration);
     setThresholds(nextThresholds);
+  }
+
+  async function saveScenario(values: SensorValues, classification: StoredReading["classification"], recommendation: string) {
+    const timestamp = new Date().toISOString();
+    const scenario: StoredReading = {
+      ...values,
+      id: `SIM-UJI-${Date.now()}`,
+      pond,
+      timestamp,
+      receivedAt: timestamp,
+      isComplete: [values.ph, values.temperature, values.salinity].every(Number.isFinite),
+      source: "SIMULASI_UJI",
+      rawValues: values,
+      classification,
+      recommendation,
+    };
+    await addReading(scenario);
+    setLogs((current) => [scenario, ...current].slice(0, 1500));
+  }
+
+  async function saveCalibrationTest(result: StoredReading) {
+    await addReading(result);
+    setLogs((current) => [result, ...current].slice(0, 1500));
   }
 
   function toggleSimulation() {
@@ -183,11 +208,11 @@ export default function App() {
       case "Pantau":
         return <PantauScreen reading={reading} decision={decision} thresholds={thresholds} simulated={simulated} online={sensorOnline} onToggleSimulation={toggleSimulation} onTestCycle={runCycleNow} lastUpdated={lastUpdated} />;
       case "Analisis C4.5":
-        return <AnalysisScreen values={reading} thresholds={thresholds} />;
+        return <AnalysisScreen values={reading} thresholds={thresholds} onSaveScenario={saveScenario} onError={setErrorMessage} />;
       case "Riwayat Log":
         return <HistoryScreen readings={logs} onExport={() => { void handleExport(); }} />;
       case "Perangkat":
-        return <DeviceScreen deviceId={deviceId} endpoint={endpoint} reading={reading} calibration={calibration} onSave={saveDevice} onSaveSettings={saveInstrumentCalibration} alerts={alerts} onError={setErrorMessage} thresholds={thresholds} />;
+        return <DeviceScreen deviceId={deviceId} endpoint={endpoint} reading={reading} calibration={calibration} onSave={saveDevice} onSaveSettings={saveInstrumentCalibration} alerts={alerts} onError={setErrorMessage} thresholds={thresholds} onSaveCalibrationTest={saveCalibrationTest} />;
     }
   }
 

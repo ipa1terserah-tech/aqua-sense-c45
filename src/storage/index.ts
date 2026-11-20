@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SensorReading } from "../services/iot";
-import { SplitPoints, splitPoints, WaterClass } from "../engine/c45";
+import { SensorValues, SplitPoints, splitPoints, WaterClass } from "../engine/c45";
 
 const LOG_KEY = "@manero/readings-v1";
 const ALERT_KEY = "@manero/alerts-v1";
@@ -8,8 +8,19 @@ const CONFIG_KEY = "@manero/device-config-v1";
 const CALIBRATION_KEY = "@manero/calibration-v1";
 const THRESHOLD_KEY = "@manero/c45-thresholds-v1";
 const MAX_LOGS = 1500;
+let readingWriteQueue: Promise<void> = Promise.resolve();
 
-export type StoredReading = SensorReading & { classification: WaterClass };
+export type CalibrationTestResult = {
+  reference: SensorValues;
+  errors: SensorValues;
+  errorPercentages: SensorValues;
+  status: "Valid / Akurat" | "Perlu Kalibrasi Ulang";
+};
+export type StoredReading = SensorReading & {
+  classification: WaterClass;
+  recommendation?: string;
+  calibrationTest?: CalibrationTestResult;
+};
 export type StoredAlert = { id: string; timestamp: string; message: string; severity: "warning" | "danger" };
 export type SensorCalibration = { ph: number; temperature: number; salinity: number };
 export const defaultSensorCalibration: SensorCalibration = { ph: 0, temperature: 0, salinity: 0 };
@@ -19,9 +30,13 @@ export async function getReadings(): Promise<StoredReading[]> {
   return value ? (JSON.parse(value) as StoredReading[]) : [];
 }
 
-export async function addReading(reading: StoredReading): Promise<void> {
-  const existing = await getReadings();
-  await AsyncStorage.setItem(LOG_KEY, JSON.stringify([reading, ...existing].slice(0, MAX_LOGS)));
+export function addReading(reading: StoredReading): Promise<void> {
+  const write = readingWriteQueue.then(async () => {
+    const existing = await getReadings();
+    await AsyncStorage.setItem(LOG_KEY, JSON.stringify([reading, ...existing].slice(0, MAX_LOGS)));
+  });
+  readingWriteQueue = write.then(() => undefined, () => undefined);
+  return write;
 }
 
 export async function getAlerts(): Promise<StoredAlert[]> {

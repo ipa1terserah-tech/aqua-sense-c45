@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Alert, StyleSheet, Text, View } from "react-native";
 import { entropy, evaluateWater, gainRatio, giniImpurity, idealRanges, informationGain, journalEvidence, journalSplitPoints, referenceTrainingSet, SensorValues, SplitPoints, toleranceRanges } from "../engine/c45";
-import { Card, DecisionTreeVisualizer, Pill, RangeSlider, SectionTitle } from "../components/FieldUI";
+import { ActionButton, Card, DecisionTreeVisualizer, Pill, RangeSlider, SectionTitle } from "../components/FieldUI";
 import { colors, fonts } from "../theme";
 import { AnalysisProps } from "./types";
 
-export default function AnalysisScreen({ values, thresholds }: AnalysisProps) {
+export default function AnalysisScreen({ values, thresholds, onSaveScenario, onError }: AnalysisProps) {
   const [whatIf, setWhatIf] = useState(values);
+  const [savingScenario, setSavingScenario] = useState(false);
   const decision = useMemo(() => evaluateWater(whatIf, thresholds), [whatIf, thresholds]);
   const baseEntropy = entropy(referenceTrainingSet.map((row) => row.label));
   const journalMetrics: { name: string; key: string; split: number; gini: number; rootGain: number; childGain?: number }[] = [
@@ -21,6 +22,18 @@ export default function AnalysisScreen({ values, thresholds }: AnalysisProps) {
   ];
   function update(key: keyof SensorValues, value: number) {
     setWhatIf((previous) => ({ ...previous, [key]: value }));
+  }
+  async function saveScenario() {
+    setSavingScenario(true);
+    try {
+      await onSaveScenario(whatIf, decision.classification, decision.recommendation);
+      onError("");
+      Alert.alert("Skenario tersimpan", "Hasil simulasi What-If ditambahkan ke riwayat uji.");
+    } catch (error) {
+      onError(`Skenario tidak tersimpan: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSavingScenario(false);
+    }
   }
   return <>
     <Card style={styles.intro}>
@@ -70,6 +83,7 @@ export default function AnalysisScreen({ values, thresholds }: AnalysisProps) {
       <RangeSlider label="Salinitas" value={whatIf.salinity} min={10} max={35} step={0.1} unit="ppt" precision={1} onChange={(v) => update("salinity", v)} />
       <View style={styles.result}><Text style={styles.resultLabel}>HASIL SIMULASI</Text><Pill tone={decision.classification === "BAGUS" ? "good" : "danger"}>{decision.classification}</Pill></View>
       <Text style={styles.recommendation}>{decision.recommendation}</Text>
+      <View style={styles.saveScenario}><ActionButton label={savingScenario ? "Menyimpan..." : "Simpan Skenario ke Riwayat Uji"} onPress={() => { void saveScenario(); }} secondary /></View>
     </Card>
     <Text style={styles.disclaimer}>Catatan: dataset referensi 10 baris merupakan contoh demonstrasi, bukan dataset penelitian asli. Validasi ambang serta rekomendasi dengan data lapangan dan SOP teknis.</Text>
   </>;
@@ -99,5 +113,6 @@ const styles = StyleSheet.create({
   result: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 16, borderTopWidth: 1, borderColor: colors.border, paddingTop: 14 },
   resultLabel: { color: colors.textSecondary, fontFamily: fonts.bold, fontSize: 9 },
   recommendation: { color: colors.textPrimary, fontFamily: fonts.body, fontSize: 11, lineHeight: 17, marginTop: 10 },
+  saveScenario: { marginTop: 12 },
   disclaimer: { color: colors.textSecondary, fontFamily: fonts.body, fontSize: 10, lineHeight: 15, marginTop: 4, marginBottom: 18 },
 });

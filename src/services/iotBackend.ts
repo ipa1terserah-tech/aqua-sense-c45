@@ -36,11 +36,24 @@ export async function recordTelemetry(
   reading: SensorReading,
   thresholds: SplitPoints,
   calibration: SensorCalibration = defaultSensorCalibration,
+  metadata: { receivedAt?: string; latencyMs?: number; source?: SensorReading["source"] } = {},
 ): Promise<StoredReading> {
+  const startedAt = Date.now();
   const calibrated = applyCalibration(reading, calibration);
+  const receivedAt = metadata.receivedAt ?? new Date().toISOString();
+  const latencyMs = metadata.latencyMs ?? Math.max(0, Date.now() - startedAt);
+  const isComplete = [calibrated.ph, calibrated.temperature, calibrated.salinity].every(Number.isFinite)
+    && Number.isFinite(Date.parse(calibrated.timestamp))
+    && reading.isComplete !== false;
+  const decision = evaluateWater(calibrated, thresholds);
   const saved: StoredReading = {
     ...calibrated,
-    classification: evaluateWater(calibrated, thresholds).classification,
+    source: metadata.source ?? calibrated.source,
+    receivedAt,
+    latencyMs,
+    isComplete,
+    classification: decision.classification,
+    recommendation: decision.recommendation,
   };
   await addReading(saved);
   return saved;
@@ -52,14 +65,16 @@ export async function pollTelemetry(
   thresholds: SplitPoints,
   calibration: SensorCalibration,
   adapter: TelemetryAdapter = restTelemetryAdapter,
+  source: SensorReading["source"] = "ESP32_LIVE",
 ): Promise<PollResult> {
   let reading: SensorReading;
+  const startedAt = Date.now();
   try {
     reading = await adapter.readLatest(config, pond);
   } catch (remoteError) {
     const message = messageOf(remoteError);
     const cachedReadings = await getReadings();
-    const latest = cachedReadings[0];
+    const latest = cachedReadings.find((item) => item.source !== "SIMULASI_UJI" && item.source !== "UJI_KALIBRASI");
     if (!latest) {
       throw new Error(`Backend tidak terjangkau dan cache lokal belum memiliki data: ${message}`);
     }
@@ -72,7 +87,11 @@ export async function pollTelemetry(
     };
   }
 
-  const saved = await recordTelemetry(reading, thresholds, calibration);
+  const saved = await recordTelemetry(reading, thresholds, calibration, {
+    receivedAt: new Date().toISOString(),
+    latencyMs: Math.max(0, Date.now() - startedAt),
+    source,
+  });
   return {
     reading: saved,
     decision: evaluateWater(saved, thresholds),

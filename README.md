@@ -4,9 +4,9 @@ Aplikasi Expo/React Native untuk pemantauan kualitas air tambak udang vaname (*L
 
 ## Fitur
 
-- Pembacaan suhu, pH, dan salinitas; mode simulasi serta integrasi REST.
+- Pembacaan suhu, pH, dan salinitas; mode simulasi serta integrasi REST dengan pencatatan latensi respons, waktu terima, dan kelengkapan data.
 - Siklus deteksi dan pencatatan rutin setiap **10 menit**; tombol **Uji Siklus Sekarang** untuk demonstrasi.
-- Klasifikasi BAGUS/TIDAK BAGUS, jalur aturan, simulator What-If, riwayat lokal, dan ekspor CSV.
+- Klasifikasi BAGUS/TIDAK BAGUS, jalur aturan, simulator What-If yang dapat disimpan ke riwayat uji, dan ekspor CSV pengujian.
 - Fallback offline-first ke pembacaan terakhir di AsyncStorage saat REST API tidak tersedia.
 - Tema instrumen Tactile Field-Instrument dengan palet Biru Maritim & Putih.
 
@@ -93,5 +93,7 @@ Referensi utama: Iqbal, M., Usino, W., & Triono. (2020, April). “Sistem Penduk
 ## Kalibrasi dan validasi
 
 Tab **Perangkat** menyediakan slider offset pH (−1 hingga +1, step 0,05), suhu dan salinitas (−5 hingga +5, step 0,1), pratinjau nilai raw/terkalibrasi, serta tombol untuk menolkan semua offset. Slider split memiliki rentang pH 6,50–8,50 (step 0,05), suhu 24–34 °C (step 0,25), batas bawah salinitas 5–25 ppt dan atas 15–35 ppt (keduanya step 0,5). Profil Standar Jurnal & Tambak Maneron, Intensif/Padat Tebar, dan Pasca-Hujan mengatur seluruh split dalam satu ketukan; tombol simpan menerapkan ke AsyncStorage dan reset mengembalikan default.
+
+Kartu Kalibrasi Offset juga menyediakan uji pembanding terhadap pH meter, termometer, dan refraktometer standar. Status akurasi memakai batas error 2% atau toleransi pembanding lapangan yang ditampilkan pada kartu; hasilnya dapat dicatat ke riwayat uji. Riwayat membedakan log **Sensor / Siklus** dari **Simulasi Uji** dan mengekspor waktu terima, sumber, nilai sensor, latensi, kelengkapan data, klasifikasi, serta rekomendasi sebagai CSV.
 
 Kalibrasi lapangan, validasi model, dan tindakan korektif tetap harus mengikuti SOP tambak. Rekomendasi aplikasi bukan pengganti pengukuran laboratorium atau keputusan teknisi; rentang dan metrik sumber dijelaskan lengkap di [LAPORAN.md](./LAPORAN.md).

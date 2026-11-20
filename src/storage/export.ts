@@ -1,33 +1,36 @@
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
+import { Platform, Share } from "react-native";
 import { StoredReading } from "./index";
 
 export async function exportReadingsCsv(readings: StoredReading[]): Promise<void> {
   const rows = [
-    ["Aplikasi", "Aquapenaeus C4.5"],
-    ["Lokasi", "Tambak Maneron (Maneron, Kec. Sepulu, Kab. Bangkalan, Madura)"],
-    ["Siklus deteksi", "10 menit"],
-    [],
-    ["Waktu", "Kolam", "Perangkat", "Suhu C", "pH", "Salinitas ppt", "Klasifikasi", "Sumber"],
-    ...readings.map((item) => [
-      new Date(item.timestamp).toLocaleString("id-ID"),
-      item.pond,
-      item.id,
-      item.temperature.toFixed(1),
-      item.ph.toFixed(2),
-      item.salinity.toFixed(1),
-      item.classification,
+    ["No", "Waktu_Terima", "Sumber_Data", "pH_Terkalibrasi", "Suhu_C", "Salinitas_ppt", "Latensi_ms", "Kelengkapan_Data", "Klasifikasi_C45", "Rekomendasi"],
+    ...readings.map((item, index) => [
+      String(index + 1),
+      item.receivedAt ?? item.timestamp,
       item.source,
+      item.ph.toFixed(2),
+      item.temperature.toFixed(1),
+      item.salinity.toFixed(1),
+      item.latencyMs === undefined ? "" : String(item.latencyMs),
+      item.isComplete === undefined ? "" : item.isComplete ? "LENGKAP" : "TIDAK LENGKAP",
+      item.classification,
+      item.recommendation ?? (item.calibrationTest
+        ? `Uji pembanding ${item.calibrationTest.status}; pH error ${item.calibrationTest.errors.ph.toFixed(2)} (${item.calibrationTest.errorPercentages.ph.toFixed(2)}%), suhu ${item.calibrationTest.errors.temperature.toFixed(2)} (${item.calibrationTest.errorPercentages.temperature.toFixed(2)}%), salinitas ${item.calibrationTest.errors.salinity.toFixed(2)} (${item.calibrationTest.errorPercentages.salinity.toFixed(2)}%).`
+        : ""),
     ]),
   ];
-  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
-  const uri = `${FileSystem.documentDirectory}aquapenaeus-c45-log-${new Date().toISOString().slice(0, 10)}.csv`;
-  await FileSystem.writeAsStringAsync(uri, `\uFEFF${csv}`, { encoding: FileSystem.EncodingType.UTF8 });
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(uri, { mimeType: "text/csv", dialogTitle: "Ekspor laporan Aquapenaeus C4.5" });
-  } else {
-    throw new Error("Fitur berbagi file tidak tersedia di perangkat ini.");
+  const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+  if (Platform.OS === "web" && (typeof navigator === "undefined" || !("share" in navigator))) {
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `aquapenaeus-c45-uji-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    return;
   }
+  await Share.share({ title: "Ekspor CSV Pengujian Aquapenaeus C4.5", message: csv });
 }
 
 function csvCell(value: string): string {

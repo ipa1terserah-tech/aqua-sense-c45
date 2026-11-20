@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { idealRanges, SplitPoints, splitPoints, toleranceRanges } from "../engine/c45";
-import { SensorCalibration, StoredAlert, defaultSensorCalibration } from "../storage";
-import { SensorValues } from "../engine/c45";
+import { evaluateWater, idealRanges, SensorValues, SplitPoints, splitPoints, toleranceRanges } from "../engine/c45";
+import { CalibrationTestResult, SensorCalibration, StoredAlert, StoredReading, defaultSensorCalibration } from "../storage";
 import { colors, fonts, radius } from "../theme";
 import { ActionButton, Card, Pill, RangeSlider, SectionTitle } from "../components/FieldUI";
 import { DeviceProps } from "./types";
@@ -22,6 +21,7 @@ export default function DeviceScreen({
   alerts,
   onError,
   thresholds,
+  onSaveCalibrationTest,
 }: DeviceProps) {
   const [id, setId] = useState(deviceId);
   const [url, setUrl] = useState(endpoint);
@@ -30,6 +30,9 @@ export default function DeviceScreen({
   const [profileName, setProfileName] = useState(() => findProfile(thresholds));
   const [saving, setSaving] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState("");
+  const [standardValues, setStandardValues] = useState<SensorValues>({ ph: 0, temperature: 0, salinity: 0 });
+  const [standardInput, setStandardInput] = useState({ ph: "", temperature: "", salinity: "" });
+  const [savingTest, setSavingTest] = useState(false);
   const rawValues: SensorValues = reading.rawValues ?? {
     ph: reading.ph,
     temperature: reading.temperature,
@@ -40,7 +43,30 @@ export default function DeviceScreen({
     temperature: rawValues.temperature + draftCalibration.temperature,
     salinity: rawValues.salinity + draftCalibration.salinity,
   }), [draftCalibration, rawValues.ph, rawValues.salinity, rawValues.temperature]);
-
+  const comparison = useMemo(() => {
+    const errors: SensorValues = {
+      ph: Math.abs(previewValues.ph - standardValues.ph),
+      temperature: Math.abs(previewValues.temperature - standardValues.temperature),
+      salinity: Math.abs(previewValues.salinity - standardValues.salinity),
+    };
+    const errorPercentages: SensorValues = {
+      ph: standardValues.ph > 0 ? errors.ph / standardValues.ph * 100 : 0,
+      temperature: standardValues.temperature > 0 ? errors.temperature / standardValues.temperature * 100 : 0,
+      salinity: standardValues.salinity > 0 ? errors.salinity / standardValues.salinity * 100 : 0,
+    };
+    const tolerances: SensorValues = { ph: 0.1, temperature: 0.5, salinity: 1 };
+    const hasReferences = Object.values(standardValues).every((value) => Number.isFinite(value) && value > 0);
+    const passed = hasReferences && (Object.keys(errors) as (keyof SensorValues)[]).every((key) => (
+      errorPercentages[key] <= 2 || errors[key] <= tolerances[key]
+    ));
+    const status: CalibrationTestResult["status"] = passed ? "Valid / Akurat" : "Perlu Kalibrasi Ulang";
+    return {
+      errors,
+      errorPercentages,
+      ready: hasReferences,
+      status,
+    } satisfies Pick<CalibrationTestResult, "errors" | "errorPercentages" | "status"> & { ready: boolean };
+  }, [previewValues, standardValues]);
   useEffect(() => {
     setId(deviceId);
     setUrl(endpoint);
@@ -134,6 +160,52 @@ export default function DeviceScreen({
     }
   }
 
+  function updateStandardValue(key: keyof SensorValues, value: string) {
+    setStandardInput((current) => ({ ...current, [key]: value }));
+    const parsed = Number(value.replace(",", "."));
+    setStandardValues((current) => ({ ...current, [key]: value.trim() && Number.isFinite(parsed) ? parsed : 0 }));
+  }
+
+  async function saveCalibrationTest() {
+    if (savingTest) return;
+    const reference = {
+      ph: Number(standardInput.ph.replace(",", ".")),
+      temperature: Number(standardInput.temperature.replace(",", ".")),
+      salinity: Number(standardInput.salinity.replace(",", ".")),
+    };
+    if (Object.values(reference).some((value) => !Number.isFinite(value) || value <= 0)) {
+      onError("Masukkan nilai referensi standar yang valid dan lebih besar dari 0 untuk pH, suhu, dan salinitas.");
+      return;
+    }
+    const testResult: CalibrationTestResult = { ...comparison, reference };
+    const timestamp = new Date().toISOString();
+    const values: SensorValues = { ...previewValues };
+    const statusSummary = `Uji pembanding: ${testResult.status}. Error pH ${testResult.errors.ph.toFixed(2)} (${testResult.errorPercentages.ph.toFixed(2)}%), suhu ${testResult.errors.temperature.toFixed(2)} (${testResult.errorPercentages.temperature.toFixed(2)}%), salinitas ${testResult.errors.salinity.toFixed(2)} (${testResult.errorPercentages.salinity.toFixed(2)}%).`;
+    const record: StoredReading = {
+      ...values,
+      id: `${reading.id}-CAL-${Date.now()}`,
+      pond: reading.pond,
+      timestamp,
+      receivedAt: timestamp,
+      isComplete: true,
+      source: "UJI_KALIBRASI",
+      rawValues,
+      classification: evaluateWater(values, thresholds).classification,
+      recommendation: statusSummary,
+      calibrationTest: testResult,
+    };
+    setSavingTest(true);
+    try {
+      await onSaveCalibrationTest(record);
+      onError("");
+      Alert.alert("Uji kalibrasi dicatat", "Hasil pembanding alat standar tersimpan di riwayat lokal.");
+    } catch (error) {
+      onError(`Uji kalibrasi tidak tersimpan: ${messageOf(error)}`);
+    } finally {
+      setSavingTest(false);
+    }
+  }
+
   return <>
     <SectionTitle title="Perangkat ESP32" />
     <Card>
@@ -175,6 +247,26 @@ export default function DeviceScreen({
       </View>
       <ActionButton label="Nolkan Semua Offset" onPress={zeroAllOffsets} secondary />
       <Text style={styles.helper}>Offset menggeser pembacaan, bukan mengganti kalibrasi multipoint probe. Pastikan firmware tidak menerapkan koreksi yang sama dua kali.</Text>
+      <View style={styles.referenceTest}>
+        <Text style={styles.referenceTitle}>Uji Pembanding Alat Standar</Text>
+        <Text style={styles.helper}>Masukkan hasil pH meter, termometer, dan refraktometer standar. Toleransi pembanding lapangan: pH 0,1; suhu 0,5 °C; salinitas 1 ppt.</Text>
+        {([
+          { key: "ph", label: "pH meter standar", unit: "pH", precision: 2 },
+          { key: "temperature", label: "Termometer standar", unit: "°C", precision: 1 },
+          { key: "salinity", label: "Refraktometer standar", unit: "ppt", precision: 1 },
+        ] as const).map(({ key, label, unit, precision }) => <View key={key} style={styles.referenceRow}>
+          <View style={styles.referenceInputWrap}>
+            <Text style={styles.inputLabel}>{label}</Text>
+            <TextInput value={standardInput[key]} onChangeText={(value) => updateStandardValue(key, value)} keyboardType="decimal-pad" style={styles.input} placeholder={`Nilai ${unit}`} placeholderTextColor={colors.textSecondary} />
+          </View>
+          <View style={styles.referenceResult}>
+            <Text style={styles.comparisonLabel}>Selisih / Error</Text>
+            <Text style={styles.comparisonNumber}>{standardValues[key] > 0 ? `${comparison.errors[key].toFixed(precision)} ${unit} · ${comparison.errorPercentages[key].toFixed(2)}%` : "—"}</Text>
+          </View>
+        </View>)}
+        <Pill tone={comparison.status === "Valid / Akurat" ? "good" : "warning"}>{comparison.ready ? comparison.status : "Masukkan nilai standar"}</Pill>
+        <View style={styles.referenceButton}><ActionButton label={savingTest ? "Mencatat..." : "Catat ke Log Uji Kalibrasi"} onPress={() => { void saveCalibrationTest(); }} secondary /></View>
+      </View>
     </Card>
 
     <SectionTitle title="Ambang Pohon C4.5" trailing={profileName.toUpperCase()} />
@@ -250,6 +342,12 @@ const styles = StyleSheet.create({
   helper: { color: colors.textSecondary, fontFamily: fonts.body, fontSize: 10, lineHeight: 15, marginTop: 10, marginBottom: 12 },
   helperTop: { color: colors.textSecondary, fontFamily: fonts.body, fontSize: 10, lineHeight: 15, marginBottom: 7 },
   calibrationSection: { paddingBottom: 9, marginBottom: 4, borderBottomWidth: 1, borderColor: colors.border },
+  referenceTest: { marginTop: 14, padding: 11, backgroundColor: colors.bgPrimary, borderRadius: radius.sm },
+  referenceTitle: { color: colors.textPrimary, fontFamily: fonts.bold, fontSize: 12 },
+  referenceRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  referenceInputWrap: { flex: 1 },
+  referenceResult: { flex: 1, paddingTop: 10 },
+  referenceButton: { marginTop: 8 },
   comparisonRow: { flexDirection: "row", alignItems: "center", marginTop: 9, gap: 9 },
   comparisonValue: { flex: 1, backgroundColor: colors.bgPrimary, borderRadius: radius.sm, paddingHorizontal: 9, paddingVertical: 7 },
   comparisonLabel: { color: colors.textSecondary, fontFamily: fonts.body, fontSize: 8 },
