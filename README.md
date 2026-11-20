@@ -2,6 +2,10 @@
 
 Aplikasi Flutter untuk memantau kualitas air tambak udang vaname dan membantu evaluasi kualitas air dengan aturan C4.5. Aplikasi menggunakan Dart dan Flutter SDK tanpa package pihak ketiga.
 
+## Supabase dan protokol
+
+Target backend produk adalah Supabase, bukan broker MQTT: ESP32 mengirim HTTPS POST berformat JSON melalui endpoint ingest yang aman; Flutter mengambil histori melalui HTTPS REST dan menerima pembacaan baru melalui Supabase Realtime over WSS. **Integrasi Supabase belum aktif di source saat ini**—firmware dan aplikasi masih memakai endpoint REST placeholder/konfigurasi, tanpa project URL, key, Edge Function, atau subscription Realtime. Rincian arsitektur dan requirement ada di [PRD.md](./PRD.md).
+
 ## Fitur
 
 - Pantau suhu, pH, dan salinitas, dengan mode simulasi atau pembacaan REST ESP32.

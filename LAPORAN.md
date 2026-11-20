@@ -51,9 +51,9 @@ Probe EC ─┘                         │
                             melalui Flutter MethodChannel
 ```
 
-Firmware mengirim HTTP POST ke endpoint penerima. Aplikasi membaca endpoint REST dengan HTTP GET. Karena format POST dan GET berperan berbeda, backend/bridge harus menyediakan rute penerima telemetry dan rute pembacaan data terbaru. Sketch ESP32 bukan server REST dan tidak membuka endpoint GET secara langsung.
+Implementasi yang ada masih memakai HTTP POST firmware ke URL placeholder dan HTTP GET aplikasi ke endpoint yang dikonfigurasi; belum ada koneksi project Supabase atau subscription Realtime. Arsitektur target menggunakan Supabase sebagai backend, bukan broker MQTT: HTTPS POST melalui Edge Function untuk ingest, HTTPS REST untuk histori, dan WSS Supabase Realtime untuk event pembacaan baru. Rincian status dan requirement ada di [PRD.md](./PRD.md).
 
-Aplikasi Flutter menggunakan `HttpClient` dari Dart SDK untuk mengambil telemetry melalui REST. Penyimpanan lokal memakai platform API bawaan melalui Flutter MethodChannel: Android SharedPreferences dan iOS UserDefaults. Tidak ada package pihak ketiga pada aplikasi; backend/bridge REST tetap disediakan terpisah.
+Aplikasi Flutter menggunakan `HttpClient` dari Dart SDK dan penyimpanan lokal melalui API platform bawaan Android/iOS. Tidak ada package pihak ketiga pada aplikasi saat ini. Integrasi Supabase harus menambahkan konfigurasi endpoint yang aman tanpa memasukkan `service_role` key ke firmware, aplikasi, atau repository.
 
 ### 2.2 Pinout ESP32
 
